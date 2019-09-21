@@ -1,3 +1,5 @@
+#pragma once
+
 #include <optional>
 
 namespace safet {
@@ -105,6 +107,16 @@ public:
         } else {
             return std::forward<EmptyFunctor>(if_empty)();
         }
+    }
+
+    template <typename InstantiateFunctor>
+    auto get_or_instantiate(InstantiateFunctor&& functor) -> T&
+    {
+        if (!m_value.has_value()) {
+            m_value.emplace(functor());
+        }
+
+        return m_value.value();
     }
 
 private:

@@ -1,3 +1,5 @@
+#pragma once
+
 #include <mutex>
 
 namespace safet {
@@ -17,6 +19,9 @@ public:
 
     mutex(const mutex<T>& copy) = delete;
     mutex(mutex<T>&& move) = delete;
+
+    auto operator=(const mutex<T>& copy) -> mutex<T>& = delete;
+    auto operator=(mutex<T>&& move) -> mutex<T>& = delete;
 
     template <typename Functor>
     auto acquire(Functor&& f) & -> void
