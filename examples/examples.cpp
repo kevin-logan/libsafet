@@ -11,6 +11,30 @@ auto stol_mine(const std::string& str) -> int64_t
     return std::stol(str);
 }
 
+auto test_join() -> void
+{
+    std::vector<int64_t> vec;
+
+    for (size_t i = 0; i < 100000; ++i) {
+        vec.emplace_back(rand() % 1000);
+    }
+
+    auto vec_2 = vec;
+
+    auto start = std::chrono::high_resolution_clock::now();
+    std::partition(vec.begin(), vec.end(), [](const auto& val) { return val > 500; });
+    auto middle = std::chrono::high_resolution_clock::now();
+    vec = safet::range{ std::move(vec) }.filter([](const auto& val) { return val <= 500; }).join(safet::range{ std::move(vec) }.filter([](const auto& val) { return val > 500; })).collect<std::vector>();
+    auto end = std::chrono::high_resolution_clock::now();
+
+    auto stl_us = std::chrono::duration_cast<std::chrono::microseconds>(middle - start).count();
+    auto safet_us = std::chrono::duration_cast<std::chrono::microseconds>(end - middle).count();
+
+    std::cout << "stl partition took " << stl_us << "us" << std::endl;
+    std::cout << "safet partition took " << safet_us << "us" << std::endl;
+    std::cout << static_cast<double>(safet_us) / static_cast<double>(stl_us) << std::endl;
+}
+
 auto container_test_stl_way(const std::vector<std::string>& vec) -> std::pair<std::chrono::nanoseconds, std::list<int64_t>>
 {
 
@@ -43,11 +67,13 @@ auto container_test_safet_way(const std::vector<std::string>& stl_vec) -> std::p
 
 auto use_container() -> void
 {
+    test_join();
+
     size_t stl_stol_calls{ 0 };
     size_t safet_stol_calls{ 0 };
     std::chrono::nanoseconds stl_total{ 0 };
     std::chrono::nanoseconds safet_total{ 0 };
-    for (size_t i = 0; i < 50; ++i) {
+    for (size_t i = 0; i < 500; ++i) {
         std::vector<std::string> vec;
 
         for (size_t i = 0; i < 10000; ++i) {
@@ -81,7 +107,8 @@ auto use_container() -> void
         vec_unique.push_back(std::make_unique<int64_t>(rand() % 100));
     }
 
-    safet::range{ std::move(vec_unique) }.filter([](const std::unique_ptr<int64_t>& int_ptr) { return *int_ptr > 50; }).map([](std::unique_ptr<int64_t> int_ptr) { return std::make_unique<std::string>("random_" + std::to_string(*int_ptr)); }).filter([](const std::unique_ptr<std::string>& str) { return str->back() != '3'; }).each([](std::unique_ptr<std::string> str_ptr) { std::cout << "result: " << *str_ptr << std::endl; });
+    auto fold_result = safet::range{ std::move(vec_unique) }.filter([](const std::unique_ptr<int64_t>& int_ptr) { return *int_ptr > 50; }).map([](std::unique_ptr<int64_t> int_ptr) { return std::make_unique<std::string>("random_" + std::to_string(*int_ptr)); }).filter([](const std::unique_ptr<std::string>& str) { return str->back() != '3'; }).fold([](std::string complete_value, auto&& incoming_value) { complete_value.append(*incoming_value); return complete_value; }, std::string{});
+    std::cout << "unique_ptr range folded to a string of length: " << fold_result.size() << std::endl;
 }
 
 auto use_memory() -> void

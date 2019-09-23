@@ -20,6 +20,12 @@ public:
     auto operator=(const variant<Args...>&) -> variant<Args...>& = default;
     auto operator=(variant<Args...> &&) -> variant<Args...>& = default;
 
+    template <typename Type, typename... EmplaceArgs>
+    auto emplace(EmplaceArgs&&... emplace_args)
+    {
+        return m_variant.template emplace<Type>(std::forward<EmplaceArgs>(emplace_args)...);
+    }
+
     template <typename ArgType, typename Functor>
     auto if_set(Functor&& f) & -> std::invoke_result_t<Functor, ArgType&>
     {
@@ -93,19 +99,19 @@ public:
     }
 
     template <typename Visitor>
-    auto visit(Visitor&& v) & -> void
+    auto visit(Visitor&& v) &
     {
-        std::visit(std::forward<Visitor>(v), m_variant);
+        return std::visit(std::forward<Visitor>(v), m_variant);
     }
     template <typename Visitor>
-    auto visit(Visitor&& v) const& -> void
+    auto visit(Visitor&& v) const&
     {
-        std::visit(std::forward<Visitor>(v), m_variant);
+        return std::visit(std::forward<Visitor>(v), m_variant);
     }
     template <typename Visitor>
-    auto visit(Visitor&& v) && -> void
+    auto visit(Visitor&& v) &&
     {
-        std::visit(std::forward<Visitor>(v), std::move(m_variant));
+        return std::visit(std::forward<Visitor>(v), std::move(m_variant));
     }
 
 private:
