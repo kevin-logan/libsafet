@@ -1,5 +1,6 @@
 #pragma once
 
+#include <safet/memory.hpp>
 #include <safet/optional.hpp>
 #include <safet/variant.hpp>
 
@@ -21,21 +22,24 @@ namespace range_impl {
         template <typename InstantiateFunctor>
         auto get_or_instantiate(InstantiateFunctor&& f) const -> ValueType&
         {
-            return m_value_ptr.get_or_instantiate([f = std::forward<InstantiateFunctor>(f)]() mutable { return std::make_shared<iterator_value_wrapper<ValueType>>(iterator_value_wrapper<ValueType>{ std::forward<InstantiateFunctor>(f)() }); })->m_value;
+            return m_value_ptr.deref_or(
+                [](iterator_value_wrapper<ValueType>& w) -> ValueType& { return w.m_value; },
+                [this, f = std::forward<InstantiateFunctor>(f)]() mutable -> ValueType& { return m_value_ptr.emplace(iterator_value_wrapper<ValueType>{ std::forward<InstantiateFunctor>(f)() }).m_value; });
         }
 
         auto emplace(iterator_value_wrapper<ValueType> value_wrapper) -> ValueType&
         {
-            return m_value_ptr.emplace(std::make_shared<iterator_value_wrapper<ValueType>>(std::move(value_wrapper)))->m_value;
+            // we must create a new pointer (emplace does this) as other iterators could point to the same value
+            return m_value_ptr.emplace(std::move(value_wrapper)).m_value;
         }
 
         auto clear() -> void
         {
-            m_value_ptr = std::nullopt;
+            m_value_ptr.clear();
         }
 
     private:
-        mutable optional<std::shared_ptr<iterator_value_wrapper<ValueType>>> m_value_ptr;
+        mutable strong_ptr<iterator_value_wrapper<ValueType>> m_value_ptr;
     };
 
     template <typename ValueType>

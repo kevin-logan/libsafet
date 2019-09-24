@@ -99,17 +99,17 @@ public:
     }
 
     template <typename Visitor>
-    auto visit(Visitor&& v) &
+    decltype(auto) visit(Visitor&& v) &
     {
         return std::visit(std::forward<Visitor>(v), m_variant);
     }
     template <typename Visitor>
-    auto visit(Visitor&& v) const&
+    decltype(auto) visit(Visitor&& v) const&
     {
         return std::visit(std::forward<Visitor>(v), m_variant);
     }
     template <typename Visitor>
-    auto visit(Visitor&& v) &&
+    decltype(auto) visit(Visitor&& v) &&
     {
         return std::visit(std::forward<Visitor>(v), std::move(m_variant));
     }

@@ -4,6 +4,30 @@
 #include <list>
 #include <vector>
 
+auto stringify_variant(const safet::variant<std::string, int64_t>& v) -> safet::cow<std::string>
+{
+    return v.visit([](auto& val) {
+        using type = std::decay_t<decltype(val)>;
+
+        if constexpr (std::is_same<type, std::string>::value) {
+            return safet::cow<std::string>{ std::cref(val) };
+        } else {
+            // must be an int, store to_string conversion by value
+            return safet::cow<std::string>{ std::to_string(val) };
+        }
+    });
+}
+
+auto use_cow() -> void
+{
+    safet::variant<std::string, int64_t> v{ 1337 };
+    std::cout << "stringified 1337: " << stringify_variant(v).get_const() << std::endl;
+    v.emplace<std::string>("derp");
+    std::cout << "stringified \"derp\": " << stringify_variant(v).get_const() << std::endl;
+    v.emplace<int64_t>(10101);
+    std::cout << "stringified 10101: " << stringify_variant(v).get_const() << std::endl;
+}
+
 static size_t stol_mine_counter{ 0 };
 auto stol_mine(const std::string& str) -> int64_t
 {
@@ -73,7 +97,7 @@ auto use_container() -> void
     size_t safet_stol_calls{ 0 };
     std::chrono::nanoseconds stl_total{ 0 };
     std::chrono::nanoseconds safet_total{ 0 };
-    for (size_t i = 0; i < 500; ++i) {
+    for (size_t i = 0; i < 5000; ++i) {
         std::vector<std::string> vec;
 
         for (size_t i = 0; i < 10000; ++i) {
@@ -232,6 +256,7 @@ auto main(int argc, char* argv[], char* envp[]) -> int
     (void)argv;
     (void)envp;
 
+    //use_cow();
     use_container();
     //use_memory();
     //use_mutex();
