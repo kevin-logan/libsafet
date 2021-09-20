@@ -1,125 +1,489 @@
 #pragma once
 
+#include <safet/impl/concepts.hpp>
+
+#include <compare>
+#include <cstdint>
+#include <memory>
 #include <optional>
 
 namespace safet {
+
+template <typename T>
+class optional;
+
+namespace optional_impl {
+    template <typename T>
+    struct is_optional : std::false_type {
+    };
+
+    template <typename T>
+    struct is_optional<optional<T>> : std::true_type {
+    };
+
+    template <typename T>
+    struct innermost_type {
+        using type = T;
+    };
+
+    template <typename T>
+    struct innermost_type<optional<T>> {
+        using type = innermost_type<T>::type;
+    };
+
+    template <typename T, typename... Args>
+    concept invocable_and_returns_optional = impl::invocable<T, Args...> && is_optional<std::invoke_result_t<T, Args...>>::value;
+
+    template <typename T, typename OptionalType>
+    concept three_way_comparable_with_optional = !std::same_as<T, optional<OptionalType>> && std::three_way_comparable_with<T, OptionalType>;
+
+    template <typename T, typename OptionalType>
+    concept equality_comparable_with_optional = !std::same_as<T, optional<OptionalType>> && std::equality_comparable_with<T, OptionalType>;
+}
+
 template <typename T>
 class optional {
 public:
-    optional() {}
+    using value_type = T;
 
-    optional(T value)
-        : m_value(std::move(value))
+    optional() noexcept
+        : m_engaged(false)
     {
     }
 
-    optional(const optional<T>&) = default;
-    optional(optional<T>&&) = default;
-
-    auto operator=(const optional<T>&) -> optional<T>& = default;
-    auto operator=(optional<T> &&) -> optional<T>& = default;
-
-    auto operator=(T value) -> optional<T>&
+    optional(T value) noexcept(std::is_nothrow_move_constructible_v<T>)
+        : m_engaged(false) // will be true upon `construct` being called below
     {
-        m_value = std::move(value);
-
-        return *this;
+        construct(std::move(value));
     }
 
-    auto operator=(std::nullopt_t) -> optional<T>&
+    template <typename... Args>
+    optional(std::in_place_t, Args&&... args) noexcept(noexcept(T(std::declval<Args&&>()...)))
+        : m_engaged(false) // will be true upon `construct` being called below
     {
-        m_value = std::nullopt;
-
-        return *this;
+        construct(std::forward<Args>(args)...);
     }
 
-    template <typename... Params>
-    auto emplace(Params&&... params) -> T&
+    optional(std::nullopt_t) noexcept
+        : m_engaged(false)
     {
-        return m_value.emplace(std::forward<Params>(params)...);
     }
 
-    template <typename Functor>
-    auto if_set(Functor&& f) -> optional<T>&
+    optional(const optional& copy) noexcept(std::is_nothrow_copy_constructible_v<T>)
+        : m_engaged(false) // will be true upon `construct` being called below (if copy is engaged)
     {
-        if (m_value.has_value()) {
-            std::forward<Functor>(f)(m_value.value());
+        if (copy.m_engaged) {
+            // copy construct value, engaged if we are since we just copied that value
+            construct(copy.value());
+        }
+    }
+
+    optional(optional&& move) noexcept(std::is_nothrow_move_constructible_v<T>)
+        : m_engaged(false) // will be true upon `construct` being called below (if move is engaged)
+    {
+        if (move.m_engaged) {
+            // move construct value, engaged if we are since we just copied that value
+            construct(std::move(move).value());
+        }
+    }
+
+    ~optional() noexcept(std::is_nothrow_destructible_v<T>)
+    {
+        destroy();
+    }
+
+    auto operator=(const optional& copy) noexcept(std::is_nothrow_copy_assignable_v<T>) -> optional&
+    {
+        if (&copy != this) {
+            if (copy.m_engaged) {
+                construct(copy.value());
+            } else {
+                // destroy a value if we have one
+                destroy();
+            }
         }
 
         return *this;
     }
 
-    template <typename Functor>
-    auto if_set(Functor&& f) const -> const optional<T>&
+    auto operator=(optional&& move) noexcept(std::is_nothrow_move_assignable_v<T>) -> optional&
     {
-        if (m_value.has_value()) {
-            std::forward<Functor>(f)(m_value.value());
+        if (&move != this) {
+            if (move.m_engaged) {
+                construct(std::move(move).value());
+            } else {
+                // destroy a value if we have one
+                destroy();
+            }
         }
 
         return *this;
     }
 
-    template <typename Functor>
-    auto if_empty(Functor&& f) -> optional<T>&
+    auto operator=(T new_value) noexcept(std::is_nothrow_move_assignable_v<T>) -> optional&
     {
-        if (!m_value.has_value()) {
+        construct(std::move(new_value));
+
+        return *this;
+    }
+
+    auto operator=(std::nullopt_t) noexcept(std::is_nothrow_destructible_v<T>) -> optional&
+    {
+        destroy();
+
+        return *this;
+    }
+
+    auto operator&&(bool condition) & noexcept -> optional<T&>
+    {
+        if (m_engaged && condition) {
+            return optional<T&> { value() };
+        } else {
+            return std::nullopt;
+        }
+    }
+
+    auto operator&&(bool condition) const& noexcept -> optional<const T&>
+    {
+        if (m_engaged && condition) {
+            return optional<const T&> { value() };
+        } else {
+            return std::nullopt;
+        }
+    }
+
+    auto operator&&(bool condition) && noexcept(std::is_nothrow_move_constructible_v<T>) -> optional<T>
+    {
+        if (m_engaged && condition) {
+            return optional<T> { std::move(*this).value() };
+        } else {
+            return std::nullopt;
+        }
+    }
+
+    template <typename Functor>
+    decltype(auto) if_set(Functor&& f) &
+    {
+        static_assert(impl::invocable<Functor&&, T&>, "if_set functor must be invocable with T&");
+
+        if constexpr (impl::invocable_and_returns_something<Functor&&, T&>) {
+            return [&]() -> optional<std::invoke_result_t<Functor&&, T&>> {
+                if (m_engaged) {
+                    return std::forward<Functor>(f)(value());
+                }
+
+                return std::nullopt;
+            }();
+        } else {
+            if (m_engaged) {
+                std::forward<Functor>(f)(value());
+            }
+
+            return *this;
+        }
+    }
+
+    template <typename Functor>
+    decltype(auto) if_set(Functor&& f) const&
+    {
+        static_assert(impl::invocable<Functor&&, const T&>, "if_set functor on const optional must be invocable with const T&");
+
+        if constexpr (impl::invocable_and_returns_something<Functor&&, const T&>) {
+            return [&]() -> optional<std::invoke_result_t<Functor&&, const T&>> {
+                if (m_engaged) {
+                    return std::forward<Functor>(f)(value());
+                }
+
+                return std::nullopt;
+            }();
+        } else {
+            if (m_engaged) {
+                std::forward<Functor>(f)(value());
+            }
+
+            return *this;
+        }
+    }
+
+    template <typename Functor>
+    decltype(auto) if_set(Functor&& f) &&
+    {
+        static_assert(impl::invocable<Functor&&, T&&>, "if_set functor on r-value optional must be invocable with T&&");
+
+        if constexpr (impl::invocable_and_returns_something<Functor&&, T&&>) {
+            return [&]() -> optional<std::invoke_result_t<Functor&&, T&&>> {
+                if (m_engaged) {
+                    return std::forward<Functor>(f)(std::move(*this).value());
+                }
+
+                return std::nullopt;
+            }();
+        } else {
+            if (m_engaged) {
+                std::forward<Functor>(f)(std::move(*this).value());
+            }
+
+            return std::move(*this);
+        }
+    }
+
+    template <impl::invocable_and_returns<T> Functor>
+    auto value_or(Functor&& f) & -> T
+    {
+        if (m_engaged) {
+            return value();
+        } else {
+            return std::forward<Functor>(f)();
+        }
+    }
+
+    template <impl::invocable_and_returns<T> Functor>
+    auto value_or(Functor&& f) const& -> T
+    {
+        if (m_engaged) {
+            return value();
+        } else {
+            return std::forward<Functor>(f)();
+        }
+    }
+
+    template <impl::invocable_and_returns<T> Functor>
+    auto value_or(Functor&& f) && -> T
+    {
+        if (m_engaged) {
+            return std::move(*this).value();
+        } else {
+            return std::forward<Functor>(f)();
+        }
+    }
+
+    template <impl::invocable_and_returns_something Functor>
+    auto if_unset(Functor&& f) const -> optional<std::invoke_result_t<Functor>>
+    {
+        // const overload only, as we only ever inspect `m_engaged`
+        if (m_engaged) {
+            return std::nullopt;
+        } else {
+            return std::forward<Functor>(f)();
+        }
+    }
+
+    template <impl::invocable_and_returns_nothing Functor>
+    auto if_unset(Functor&& f) & -> optional&
+    {
+        // const overload only, as we only ever inspect `m_engaged`
+        if (!m_engaged) {
             std::forward<Functor>(f)();
         }
 
         return *this;
     }
 
-    template <typename Functor>
-    auto if_empty(Functor&& f) const -> const optional<T>&
+    template <impl::invocable_and_returns_nothing Functor>
+    auto if_unset(Functor&& f) const& -> const optional&
     {
-        if (!m_value.has_value()) {
+        // const overload only, as we only ever inspect `m_engaged`
+        if (!m_engaged) {
             std::forward<Functor>(f)();
         }
 
         return *this;
     }
 
-    template <typename SetFunctor, typename EmptyFunctor>
-    auto handle(SetFunctor&& if_set, EmptyFunctor&& if_empty) & -> std::enable_if_t<std::is_same<std::invoke_result_t<SetFunctor, T&>, std::invoke_result_t<EmptyFunctor>>::value, std::invoke_result_t<EmptyFunctor>>
+    template <impl::invocable_and_returns_nothing Functor>
+    auto if_unset(Functor&& f) && -> optional
     {
-        if (m_value.has_value()) {
-            return std::forward<SetFunctor>(if_set)(m_value.value());
+        // const overload only, as we only ever inspect `m_engaged`
+        if (!m_engaged) {
+            std::forward<Functor>(f)();
+        }
+
+        return std::move(*this);
+    }
+
+    template <typename Functor>
+    decltype(auto) and_then(Functor&& f) &
+    {
+        static_assert(optional_impl::invocable_and_returns_optional<Functor&&, T&>, "and_then functor on optional must return an optional");
+
+        return [&]() -> std::invoke_result_t<Functor&&, T&> {
+            if (m_engaged) {
+                return std::forward<Functor>(f)(value());
+            } else {
+                return std::nullopt;
+            }
+        }();
+    }
+
+    template <typename Functor>
+    decltype(auto) and_then(Functor&& f) const&
+    {
+        static_assert(optional_impl::invocable_and_returns_optional<Functor&&, const T&>, "and_then functor on optional must return an optional");
+
+        return [&]() -> std::invoke_result_t<Functor&&, const T&> {
+            if (m_engaged) {
+                return std::forward<Functor>(f)(value());
+            } else {
+                return std::nullopt;
+            }
+        }();
+    }
+
+    template <typename Functor>
+    decltype(auto) and_then(Functor&& f) &&
+    {
+        static_assert(optional_impl::invocable_and_returns_optional<Functor&&, T&&>, "and_then functor on optional must return an optional");
+
+        return [&]() -> std::invoke_result_t<Functor&&, T&&> {
+            if (m_engaged) {
+                return std::forward<Functor>(f)(std::move(*this).value());
+            } else {
+                return std::nullopt;
+            }
+        }();
+    }
+
+    template <typename... Args>
+    auto emplace(Args&&... args) -> T&
+    {
+        return construct(std::forward<Args>(args)...);
+    }
+
+    template <impl::invocable_and_returns<T> Functor>
+    auto emplace_if_empty(Functor&& f) -> T&
+    {
+        if (m_engaged) {
+            return value();
         } else {
-            return std::forward<EmptyFunctor>(if_empty)();
+            return construct(std::forward<Functor>(f)());
         }
     }
 
-    template <typename SetFunctor, typename EmptyFunctor>
-    auto handle(SetFunctor&& if_set, EmptyFunctor&& if_empty) && -> std::enable_if_t<std::is_same<std::invoke_result_t<SetFunctor, T>, std::invoke_result_t<EmptyFunctor>>::value, std::invoke_result_t<EmptyFunctor>>
+    auto collapse() && -> optional<typename optional_impl::innermost_type<T>::type>
     {
-        if (m_value.has_value()) {
-            return std::forward<SetFunctor>(if_set)(std::move(m_value.value()));
+        if constexpr (optional_impl::is_optional<T>::value) {
+            return std::move(*this).if_set([&](auto&& value) -> optional<typename optional_impl::innermost_type<T>::type> {
+                                       return std::move(value).collapse();
+                                   })
+                .value_or([&]() -> optional<typename optional_impl::innermost_type<T>::type> { return std::nullopt; });
         } else {
-            return std::forward<EmptyFunctor>(if_empty)();
+            return std::move(*this);
         }
     }
 
-    template <typename SetFunctor, typename EmptyFunctor>
-    auto handle(SetFunctor&& if_set, EmptyFunctor&& if_empty) const& -> std::enable_if_t<std::is_same<std::invoke_result_t<SetFunctor, const T&>, std::invoke_result_t<EmptyFunctor>>::value, std::invoke_result_t<EmptyFunctor>>
+    auto empty() const -> bool
     {
-        if (m_value.has_value()) {
-            return std::forward<SetFunctor>(if_set)(m_value.value());
-        } else {
-            return std::forward<EmptyFunctor>(if_empty)();
-        }
-    }
-
-    template <typename InstantiateFunctor>
-    auto get_or_instantiate(InstantiateFunctor&& functor) -> T&
-    {
-        if (!m_value.has_value()) {
-            m_value.emplace(functor());
-        }
-
-        return m_value.value();
+        return !m_engaged;
     }
 
 private:
-    std::optional<T> m_value;
+    // store references as pointers
+    static constexpr auto is_reference = std::is_reference<T>::value;
+    using storage_type = std::conditional<is_reference, std::add_pointer_t<std::remove_reference_t<T>>, T>::type;
+
+    auto value() & -> T&
+    {
+        if constexpr (is_reference) {
+            // stored as pointer, double deref
+            return **reinterpret_cast<storage_type*>(m_buffer);
+        } else {
+            return *reinterpret_cast<storage_type*>(m_buffer);
+        }
+    }
+    auto value() const& -> const T&
+    {
+        if constexpr (is_reference) {
+            // stored as pointer, double deref
+            return **reinterpret_cast<const storage_type*>(m_buffer);
+        } else {
+            return *reinterpret_cast<const storage_type*>(m_buffer);
+        }
+    }
+    auto value() && -> T
+    {
+        if constexpr (is_reference) {
+            // stored as pointer, double deref (no need to move a reference)
+            return **reinterpret_cast<storage_type*>(m_buffer);
+        } else {
+            return std::move(*reinterpret_cast<storage_type*>(m_buffer));
+        }
+    }
+    template <typename... Args>
+    auto construct(Args&&... args) -> T&
+    {
+        if (m_engaged) {
+            destroy();
+        }
+
+        m_engaged = true;
+
+        if constexpr (is_reference) {
+            // stored as pointer, double deref (no need to forward args, should always be 1 arg which is a reference)
+            return **(new (m_buffer) storage_type(std::addressof(args)...));
+        } else {
+            return *(new (m_buffer) storage_type(std::forward<Args>(args)...));
+        }
+    }
+    auto destroy() -> void
+    {
+        if (m_engaged) {
+            // no need to destroy a reference
+            if constexpr (!is_reference) {
+                std::destroy_at(&value());
+            }
+
+            m_engaged = false;
+        }
+    }
+
+    bool m_engaged { false };
+    uint8_t m_buffer[sizeof(storage_type)];
 };
+
+template <typename T>
+auto operator<=>(const optional<T>& lhs, const optional<T>& rhs) -> std::compare_three_way_result_t<T>
+{
+    return lhs.and_then([&](const T& lhs_value) {
+                  return rhs.if_set([&](const T& rhs_value) {
+                      return lhs_value <=> rhs_value;
+                  });
+              })
+        .value_or([&]() {
+            return !lhs.empty() <=> !rhs.empty();
+        });
+}
+
+template <typename T>
+auto operator==(const optional<T>& lhs, const optional<T>& rhs) -> bool
+{
+    return lhs.and_then([&](const T& lhs_value) {
+                  return rhs.if_set([&](const T& rhs_value) {
+                      // equal if both engaged and equal
+                      return lhs_value == rhs_value;
+                  });
+              })
+        .value_or([&]() {
+            // equal if both empty
+            return lhs.empty() && rhs.empty();
+        });
+}
+
+template <typename T, optional_impl::three_way_comparable_with_optional<T> U>
+auto operator<=>(const optional<T>& lhs, const U& rhs) -> std::compare_three_way_result_t<T, U>
+{
+    return lhs.if_set([&](const T& lhs_value) -> std::compare_three_way_result_t<T, U> {
+                  return lhs_value <=> rhs;
+              })
+        .value_or([]() -> std::compare_three_way_result_t<T, U> { return std::strong_ordering::less; });
+}
+
+template <typename T, optional_impl::equality_comparable_with_optional<T> U>
+auto operator==(const optional<T>& lhs, const U& rhs) -> bool
+{
+    return lhs.if_set([&](const T& lhs_value) {
+                  return lhs_value == rhs;
+              })
+        .value_or([]() { return false; });
+}
+
 }

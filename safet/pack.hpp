@@ -121,6 +121,26 @@ namespace pack_impl {
             typename filter_helper<Filterer, Types...>::type::template apply<pack<FirstType>::template append>,
             typename filter_helper<Filterer, Types...>::type>::type;
     };
+
+    template <typename PackType, typename... Others>
+    struct add_if_new {
+        using type = PackType;
+    };
+
+    template <typename PackType, typename First, typename... Others>
+    struct add_if_new<PackType, First, Others...> {
+        using type = typename add_if_new<
+            typename std::conditional<
+                PackType::template contains<First>::value,
+                PackType,
+                typename PackType::template append<First>>::type,
+            Others...>::type;
+    };
+
+    template <typename... Args>
+    struct remove_duplicates_helper {
+        using type = typename add_if_new<pack<>, Args...>::type;
+    };
 } // namespace pack_impl
 
 template <typename... PackArgs>
@@ -143,8 +163,16 @@ struct pack {
     template <typename OtherVariadic>
     using append_variadic_args = typename pack_impl::copy_template_args<pack, OtherVariadic>::type::template apply<append>;
 
+    template <typename... AppendTs>
+    using prepend = pack<AppendTs..., PackArgs...>;
+
+    template <typename OtherVariadic>
+    using prepend_variadic_args = typename pack_impl::copy_template_args<pack, OtherVariadic>::type::template apply<prepend>;
+
     template <typename TestType>
     using contains = std::disjunction<std::is_same<TestType, PackArgs>...>;
+    template <typename TestType>
+    using does_not_contain = std::bool_constant<!contains<TestType>::value>;
     template <typename... TestTypes>
     using is_equal = std::conjunction<std::is_same<TestTypes, PackArgs>...>;
 
@@ -175,6 +203,11 @@ struct pack {
     template <template <typename...> typename Filterer>
     using filter = typename pack_impl::filter_helper<Filterer, PackArgs...>::type;
 
+    using remove_duplicates = typename pack_impl::remove_duplicates_helper<PackArgs...>::type;
+
+    template <template <typename...> typename Transformer>
+    using transform = pack<typename Transformer<PackArgs>::type...>;
+
     template <typename ReturnType>
     static constexpr auto resolve_overload(ReturnType (*function_ptr)(PackArgs...)) -> ReturnType (*)(PackArgs...)
     {
@@ -190,7 +223,7 @@ struct pack {
 
     static constexpr auto make_tuple(PackArgs... args) -> std::tuple<PackArgs...>
     {
-        return std::tuple<PackArgs...>{ std::move(args)... };
+        return std::tuple<PackArgs...> { std::move(args)... };
     }
 };
 

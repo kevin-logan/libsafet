@@ -8,20 +8,29 @@ class cow {
 public:
     static_assert(std::is_copy_constructible_v<T>, "cow type must be copy constructible");
 
-    cow(std::remove_const_t<T> value)
-        : m_value(std::move(value))
+    cow(T value)
+        : m_value(std::in_place_type_t<T> {}, std::move(value))
     {
     }
-    cow(std::reference_wrapper<std::add_const_t<T>> ref)
-        : m_value(std::move(ref))
+    cow(std::reference_wrapper<const T> ref)
+        : m_value(std::in_place_type_t<const T&> {}, ref.get())
     {
     }
 
-    cow(const cow&) = default;
+    cow(const cow& copy)
+        : m_value(std::in_place_type_t<const T&> {}, std::ref(copy.get_const()))
+    {
+    }
     cow(cow&&) = default;
 
-    auto operator=(const cow&) -> cow& = default;
-    auto operator=(cow &&) -> cow& = default;
+    ~cow() = default;
+
+    auto operator=(const cow& copy) -> cow&
+    {
+        m_value.template emplace<const T&>(copy.get_const());
+        return *this;
+    }
+    auto operator=(cow&&) -> cow& = default;
 
     auto operator=(T value) -> cow&
     {
@@ -30,39 +39,31 @@ public:
         return *this;
     }
 
-    auto operator=(std::reference_wrapper<std::add_const_t<T>> ref) -> cow&
+    auto operator=(std::reference_wrapper<const T> ref) -> cow&
     {
-        m_value.template emplace<std::reference_wrapper<std::add_const_t<T>>>(std::move(ref));
+        m_value.template emplace<const T&>(ref.get());
 
         return *this;
     }
 
     auto get_const() const -> const T&
     {
-        return m_value.visit([](auto& value) -> const T& {
-            using type = std::decay_t<decltype(value)>;
-
-            if constexpr (std::is_same<type, T>::value) {
-                return value;
-            } else {
-                // must be reference wrapper
-                return value.get();
-            }
+        return m_value.visit([](const auto& value) -> const T& {
+            return value;
         });
     }
 
     auto get_mutable() -> T&
     {
-        return m_value.visit([this](auto& value) -> T& {
-            using type = std::decay_t<decltype(value)>;
-
-            if constexpr (std::is_same<type, T>::value) {
-                return value;
-            } else {
-                // must be reference wrapper
-                return m_value.template emplace<T>(value.get());
-            }
-        });
+        return m_value.visit(
+            overloaded {
+                [this](const T& value) -> T& {
+                    // must be reference, so emplace on the variant to copy the value
+                    return m_value.template emplace<T>(value);
+                },
+                [](T& value) -> T& {
+                    return value;
+                } });
     }
 
     auto set(T value) -> T&
@@ -70,26 +71,19 @@ public:
         return m_value.template emplace<T>(std::move(value));
     }
 
-    auto set(std::reference_wrapper<std::add_const_t<T>> ref) -> const T&
+    auto set(std::reference_wrapper<const T> ref) -> const T&
     {
-        return m_value.template emplace<std::reference_wrapper<std::add_const_t<T>>>(std::move(ref));
+        return m_value.template emplace<const T&>(ref.get());
     }
 
-    auto operator-> () const -> const T*
+    auto operator->() const -> const T*
     {
-        m_value.visit([](auto& value) -> const T* {
-            using type = std::decay_t<decltype(value)>;
-
-            if constexpr (std::is_same<type, T>::value) {
-                return &value;
-            } else {
-                // must be reference wrapper
-                return &value.get();
-            }
+        return m_value.visit([](const auto& value) -> const T* {
+            return &value;
         });
     }
 
 private:
-    variant<T, std::reference_wrapper<std::add_const_t<T>>> m_value;
+    variant<T, const T&> m_value;
 };
 }
