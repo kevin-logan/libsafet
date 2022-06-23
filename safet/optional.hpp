@@ -39,6 +39,7 @@ namespace optional_impl {
 
     template <typename T, typename OptionalType>
     concept equality_comparable_with_optional = !std::same_as<T, optional<OptionalType>> && std::equality_comparable_with<T, OptionalType>;
+
 }
 
 template <typename T>
@@ -161,182 +162,189 @@ public:
         }
     }
 
-    template <typename Functor>
-    decltype(auto) if_set(Functor&& f) &
+   template <typename Functor, typename... AdditionalArgs>
+    decltype(auto) if_set(Functor&& f, AdditionalArgs&&... additional_args) &
     {
-        static_assert(impl::invocable<Functor&&, T&>, "if_set functor must be invocable with T&");
+        static_assert(impl::invocable<Functor&&, T&, AdditionalArgs&&...>, "if_set functor must be invocable with T&");
 
-        if constexpr (impl::invocable_and_returns_something<Functor&&, T&>) {
-            return [&]() -> optional<std::invoke_result_t<Functor&&, T&>> {
+        if constexpr (impl::invocable_and_returns_something<Functor&&, T&, AdditionalArgs&&...>) {
+            return [&]() -> optional<std::invoke_result_t<Functor&&, T&, AdditionalArgs&&...>> {
                 if (m_engaged) {
-                    return std::forward<Functor>(f)(value());
+                    return std::forward<Functor>(f)(value(), std::forward<AdditionalArgs>(additional_args)...);
                 }
 
                 return std::nullopt;
             }();
         } else {
             if (m_engaged) {
-                std::forward<Functor>(f)(value());
+                std::forward<Functor>(f)(value(), std::forward<AdditionalArgs>(additional_args)...);
             }
 
             return *this;
         }
     }
 
-    template <typename Functor>
-    decltype(auto) if_set(Functor&& f) const&
+   template <typename Functor, typename... AdditionalArgs>
+    decltype(auto) if_set(Functor&& f, AdditionalArgs&&... additional_args) const&
     {
-        static_assert(impl::invocable<Functor&&, const T&>, "if_set functor on const optional must be invocable with const T&");
+        static_assert(impl::invocable<Functor&&, const T&, const AdditionalArgs&&...>, "if_set functor on const optional must be invocable with const T&");
 
-        if constexpr (impl::invocable_and_returns_something<Functor&&, const T&>) {
-            return [&]() -> optional<std::invoke_result_t<Functor&&, const T&>> {
+        if constexpr (impl::invocable_and_returns_something<Functor&&, const T&, const AdditionalArgs&&...>) {
+            return [&]() -> optional<std::invoke_result_t<Functor&&, const T&, const AdditionalArgs&&...>> {
                 if (m_engaged) {
-                    return std::forward<Functor>(f)(value());
+                    return std::forward<Functor>(f)(value(), std::forward<AdditionalArgs>(additional_args)...);
                 }
 
                 return std::nullopt;
             }();
         } else {
             if (m_engaged) {
-                std::forward<Functor>(f)(value());
+                std::forward<Functor>(f)(value(), std::forward<AdditionalArgs>(additional_args)...);
             }
 
             return *this;
         }
     }
 
-    template <typename Functor>
-    decltype(auto) if_set(Functor&& f) &&
+    template <typename Functor, typename... AdditionalArgs>
+    decltype(auto) if_set(Functor&& f, AdditionalArgs&&... additional_args) &&
     {
-        static_assert(impl::invocable<Functor&&, T&&>, "if_set functor on r-value optional must be invocable with T&&");
+        static_assert(impl::invocable<Functor&&, T&&, AdditionalArgs&&...>, "if_set functor on r-value optional must be invocable with T&&");
 
-        if constexpr (impl::invocable_and_returns_something<Functor&&, T&&>) {
-            return [&]() -> optional<std::invoke_result_t<Functor&&, T&&>> {
+        if constexpr (impl::invocable_and_returns_something<Functor&&, T&&, AdditionalArgs&&...>) {
+            return [&]() -> optional<std::invoke_result_t<Functor&&, T&&, AdditionalArgs&&...>> {
                 if (m_engaged) {
-                    return std::forward<Functor>(f)(std::move(*this).value());
+                    return std::forward<Functor>(f)(std::move(*this).value(), std::forward<AdditionalArgs>(additional_args)...);
                 }
 
                 return std::nullopt;
             }();
         } else {
             if (m_engaged) {
-                std::forward<Functor>(f)(std::move(*this).value());
+                std::forward<Functor>(f)(std::move(*this).value(), std::forward<AdditionalArgs>(additional_args)...);
             }
 
             return std::move(*this);
         }
     }
 
-    template <impl::invocable_and_returns<T> Functor>
-    auto value_or(Functor&& f) & -> T
+    template <typename Functor, typename... AdditionalArgs>
+    requires(impl::invocable_and_returns<Functor&&, T, AdditionalArgs&&...>)
+    auto value_or(Functor&& f, AdditionalArgs&&... additional_args) & -> T
     {
         if (m_engaged) {
             return value();
         } else {
-            return std::forward<Functor>(f)();
+            return std::forward<Functor>(f)(std::forward<AdditionalArgs>(additional_args)...);
         }
     }
 
-    template <impl::invocable_and_returns<T> Functor>
-    auto value_or(Functor&& f) const& -> T
+    template <typename Functor, typename... AdditionalArgs>
+    requires(impl::invocable_and_returns<Functor&&, T, AdditionalArgs&&...>)
+    auto value_or(Functor&& f, AdditionalArgs&&... additional_args) const& -> T
     {
         if (m_engaged) {
             return value();
         } else {
-            return std::forward<Functor>(f)();
+            return std::forward<Functor>(f)(std::forward<AdditionalArgs>(additional_args)...);
         }
     }
 
-    template <impl::invocable_and_returns<T> Functor>
-    auto value_or(Functor&& f) && -> T
+    template <typename Functor, typename... AdditionalArgs>
+    requires(impl::invocable_and_returns<Functor&&, T, AdditionalArgs&&...>)
+    auto value_or(Functor&& f, AdditionalArgs&&... additional_args) && -> T
     {
         if (m_engaged) {
             return std::move(*this).value();
         } else {
-            return std::forward<Functor>(f)();
+            return std::forward<Functor>(f)(std::forward<AdditionalArgs>(additional_args)...);
         }
     }
 
-    template <impl::invocable_and_returns_something Functor>
-    auto if_unset(Functor&& f) const -> optional<std::invoke_result_t<Functor>>
+    template <typename Functor, typename... AdditionalArgs>
+    requires(impl::invocable_and_returns_something<Functor&&, AdditionalArgs&&...>)
+    auto if_unset(Functor&& f, AdditionalArgs&&... additional_args) const -> optional<std::invoke_result_t<Functor&&, AdditionalArgs&&...>>
     {
         // const overload only, as we only ever inspect `m_engaged`
         if (m_engaged) {
             return std::nullopt;
         } else {
-            return std::forward<Functor>(f)();
+            return std::forward<Functor>(f)(std::forward<AdditionalArgs>(additional_args)...);
         }
     }
 
-    template <impl::invocable_and_returns_nothing Functor>
-    auto if_unset(Functor&& f) & -> optional&
+    template <typename Functor, typename... AdditionalArgs>
+    requires(impl::invocable_and_returns_nothing<Functor&&, AdditionalArgs&&...>)
+    auto if_unset(Functor&& f, AdditionalArgs&&... additional_args) & -> optional&
     {
         // const overload only, as we only ever inspect `m_engaged`
         if (!m_engaged) {
-            std::forward<Functor>(f)();
-        }
-
-        return *this;
-    }
-
-    template <impl::invocable_and_returns_nothing Functor>
-    auto if_unset(Functor&& f) const& -> const optional&
-    {
-        // const overload only, as we only ever inspect `m_engaged`
-        if (!m_engaged) {
-            std::forward<Functor>(f)();
+            std::forward<Functor>(f)(std::forward<AdditionalArgs>(additional_args)...);
         }
 
         return *this;
     }
 
-    template <impl::invocable_and_returns_nothing Functor>
-    auto if_unset(Functor&& f) && -> optional
+    template <typename Functor, typename... AdditionalArgs>
+    requires(impl::invocable_and_returns_nothing<Functor&&, AdditionalArgs&&...>)
+    auto if_unset(Functor&& f, AdditionalArgs&&... additional_args) const& -> const optional&
     {
         // const overload only, as we only ever inspect `m_engaged`
         if (!m_engaged) {
-            std::forward<Functor>(f)();
+            std::forward<Functor>(f)(std::forward<AdditionalArgs>(additional_args)...);
+        }
+
+        return *this;
+    }
+
+    template <typename Functor, typename... AdditionalArgs>
+    requires(impl::invocable_and_returns_nothing<Functor&&, AdditionalArgs&&...>)
+    auto if_unset(Functor&& f, AdditionalArgs&&... additional_args) && -> optional
+    {
+        // const overload only, as we only ever inspect `m_engaged`
+        if (!m_engaged) {
+            std::forward<Functor>(f)(std::forward<AdditionalArgs>(additional_args)...);
         }
 
         return std::move(*this);
     }
 
-    template <typename Functor>
-    decltype(auto) and_then(Functor&& f) &
+    template <typename Functor, typename... AdditionalArgs>
+    decltype(auto) and_then(Functor&& f, AdditionalArgs&&... additional_args) &
     {
-        static_assert(optional_impl::invocable_and_returns_optional<Functor&&, T&>, "and_then functor on optional must return an optional");
+        static_assert(optional_impl::invocable_and_returns_optional<Functor&&, T&, AdditionalArgs&&...>, "and_then functor on optional must return an optional");
 
-        return [&]() -> std::invoke_result_t<Functor&&, T&> {
+        return [&]() -> std::invoke_result_t<Functor&&, T&, AdditionalArgs&&...> {
             if (m_engaged) {
-                return std::forward<Functor>(f)(value());
+                return std::forward<Functor>(f)(value(), std::forward<AdditionalArgs>(additional_args)...);
             } else {
                 return std::nullopt;
             }
         }();
     }
 
-    template <typename Functor>
-    decltype(auto) and_then(Functor&& f) const&
+    template <typename Functor, typename... AdditionalArgs>
+    decltype(auto) and_then(Functor&& f, AdditionalArgs&&... additional_args) const&
     {
-        static_assert(optional_impl::invocable_and_returns_optional<Functor&&, const T&>, "and_then functor on optional must return an optional");
+        static_assert(optional_impl::invocable_and_returns_optional<Functor&&, const T&, AdditionalArgs&&...>, "and_then functor on optional must return an optional");
 
-        return [&]() -> std::invoke_result_t<Functor&&, const T&> {
+        return [&]() -> std::invoke_result_t<Functor&&, const T&, AdditionalArgs&&...> {
             if (m_engaged) {
-                return std::forward<Functor>(f)(value());
+                return std::forward<Functor>(f)(value(), std::forward<AdditionalArgs>(additional_args)...);
             } else {
                 return std::nullopt;
             }
         }();
     }
 
-    template <typename Functor>
-    decltype(auto) and_then(Functor&& f) &&
+    template <typename Functor, typename... AdditionalArgs>
+    decltype(auto) and_then(Functor&& f, AdditionalArgs&&... additional_args) &&
     {
-        static_assert(optional_impl::invocable_and_returns_optional<Functor&&, T&&>, "and_then functor on optional must return an optional");
+        static_assert(optional_impl::invocable_and_returns_optional<Functor&&, T&&, AdditionalArgs&&...>, "and_then functor on optional must return an optional");
 
-        return [&]() -> std::invoke_result_t<Functor&&, T&&> {
+        return [&]() -> std::invoke_result_t<Functor&&, T&&, AdditionalArgs&&...> {
             if (m_engaged) {
-                return std::forward<Functor>(f)(std::move(*this).value());
+                return std::forward<Functor>(f)(std::move(*this).value(), std::forward<AdditionalArgs>(additional_args)...);
             } else {
                 return std::nullopt;
             }
@@ -438,6 +446,7 @@ private:
 
     bool m_engaged { false };
     uint8_t m_buffer[sizeof(storage_type)];
+
 };
 
 template <typename T>

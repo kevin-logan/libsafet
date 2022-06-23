@@ -316,6 +316,55 @@ TEST_CASE("optional::if_set()", "[optional]")
         REQUIRE(i == 3);
         REQUIRE(i2 == 4);
     }
+
+    SECTION("argument forwarding")
+    {
+        optional o { std::make_unique<std::string>("1") };
+        auto test_argument = 2;
+
+        auto& result = o.if_set([](auto& value_ptr, auto& test_argument) 
+        { 
+            REQUIRE(*value_ptr == "1");
+            REQUIRE(test_argument == 2); 
+        }, test_argument);
+
+        // if_set returns an optional - either the return value of the functor
+        // or, if the functor returns void, it will return itself
+        REQUIRE(&result == &o);
+
+        // move semantics allow us to move the value out
+        auto new_o = std::move(o).if_set([](auto value_ptr, auto& test_argument) 
+        { 
+            REQUIRE(test_argument == 2);
+            return std::make_unique<std::string>(*value_ptr + "_2"); 
+        }, test_argument);
+
+        // o must have been set so new_o also
+        REQUIRE_FALSE(new_o.empty());
+        new_o.if_set([](auto& value_ptr, auto& test_argument) 
+        { 
+            REQUIRE(*value_ptr == "1_2"); 
+            REQUIRE(test_argument == 2);
+        }, test_argument);
+
+
+    }
+
+    SECTION("mutation of value via generic lambda and argument forwarding")
+    {
+        // Mutation with argument forwarding
+        optional i { 1 };
+        auto test_argument = 2;
+
+        i.if_set([](auto& val, auto& test_argument) { val += test_argument; }, test_argument) ;
+        REQUIRE(i == 3);
+        auto i2 = i.and_then([](auto& val, auto& test_argument) {
+            val += test_argument;
+            return optional { 4 }; }, test_argument);
+        REQUIRE(i == 5);
+        REQUIRE(i2 == 4);
+    }
+
 }
 
 TEST_CASE("optional::if_unset()", "[optional]")
@@ -334,6 +383,20 @@ TEST_CASE("optional::if_unset()", "[optional]")
 
     // result must be set now, and should be 2
     result.if_set([](auto val) { REQUIRE(val == 2); }).if_unset([]() { FAIL("if_unset must not be called on an engaged optional"); });
+
+    SECTION("argument forwarding")
+    {
+        optional o { 1 };
+        auto test_argument = 2;
+
+        // functor must be called if optional is disengaged
+        o = std::nullopt;
+        auto result = o.if_unset([](auto& test_argument) { return 2 + test_argument; }, test_argument);
+        REQUIRE(result == 4);
+
+        // result must be set now, and should be 4
+        result.if_set([](auto val) { REQUIRE(val == 4); }).if_unset([]() { FAIL("if_unset must not be called on an engaged optional"); });
+    }
 }
 
 TEST_CASE("optional::value_or()", "[optional]")
@@ -356,6 +419,26 @@ TEST_CASE("optional::value_or()", "[optional]")
     std::unique_ptr<int> ptr_out = std::move(move_only).value_or([]() { return std::make_unique<int>(4); });
 
     REQUIRE(*ptr_out == 3);
+
+    SECTION("argument forwarding")
+    {
+        optional o { 1 };
+        auto test_argument = 2;
+
+        // optional is engaged, value must be engaged value
+        REQUIRE(o.value_or([](auto& test_argument) { return test_argument; }, test_argument)  == 1);
+
+        // optional is disengaged, value must be what is returned from the functor
+        o = std::nullopt;
+        REQUIRE(o.value_or([](auto& test_argument) { return test_argument; }, test_argument) == 2);
+
+        optional move_only { std::make_unique<int>(3) };
+
+        // move semantics work
+        std::unique_ptr<int> ptr_out = std::move(move_only).value_or([](auto& test_argument) { return std::make_unique<int>(4); }, test_argument);
+
+        REQUIRE(*ptr_out == 3);
+    }
 }
 
 TEST_CASE("optional::and_then()", "[optional]")
@@ -392,6 +475,43 @@ TEST_CASE("optional::and_then()", "[optional]")
     // move semantics work
     i = std::move(move_only).and_then([&](auto value_ptr) { return string_to_digit(*value_ptr); });
     i.if_set([](int value) { REQUIRE(value == 3); }).if_unset([]() { FAIL("and_then must return an engaged optional when the optional is engaged and the functor succeeds"); });
+
+    SECTION("argument forwarding")
+    {
+        // converts a string into a number from 0-9, or an empty optional if the
+        // string wasn't a number from 0-9 then adds the second int value to the string value.
+        auto sum_string_and_digit = [](const std::string& str, const int& value) -> optional<int> {
+            if (str.size() == 1 && str[0] >= '0' && str[0] <= '9') {
+                return (str[0] - '0') + value;
+            } else {
+                return std::nullopt;
+            }
+        };
+
+        optional<std::string> s;
+        int test_argument = 2;
+        // and_then on an empty optional will always return an empty optional
+        // of the functor's result's type
+        optional<int> i = s.and_then([&](auto value, auto& test_argument) { return sum_string_and_digit(value, test_argument); }, test_argument);
+        REQUIRE(i.empty());
+
+        // empty optional if the functor returns nullopt
+        s = "not a number";
+        i = s.and_then([&](auto value, auto& test_argument) { return sum_string_and_digit(value, test_argument); }, test_argument);
+        REQUIRE(i.empty());
+
+        // "5" will succeed in string_to_digit, so the conversion must succeed
+        s = "5";
+        i = s.and_then([&](auto value, auto& test_argument) { return sum_string_and_digit(value, test_argument); }, test_argument);
+        i.if_set([](int value) { REQUIRE(value == 7); }).if_unset([]() { FAIL("and_then must return an engaged optional when the optional is engaged and the functor succeeds"); });
+
+        optional move_only { std::make_unique<std::string>("3") };
+
+        // move semantics work
+        i = std::move(move_only).and_then([&](auto value_ptr, auto& test_argument) { return sum_string_and_digit(*value_ptr, test_argument); }, test_argument);
+        i.if_set([](int value) { REQUIRE(value == 5); }).if_unset([]() { FAIL("and_then must return an engaged optional when the optional is engaged and the functor succeeds"); });
+
+    }
 }
 
 TEST_CASE("optional::emplace()", "[optional]")
