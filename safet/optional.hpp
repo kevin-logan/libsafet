@@ -187,10 +187,10 @@ public:
    template <typename Functor, typename... AdditionalArgs>
     decltype(auto) if_set(Functor&& f, AdditionalArgs&&... additional_args) const&
     {
-        static_assert(impl::invocable<Functor&&, const T&, const AdditionalArgs&&...>, "if_set functor on const optional must be invocable with const T&");
+        static_assert(impl::invocable<Functor&&, const T&, AdditionalArgs&&...>, "if_set functor on const optional must be invocable with const T&");
 
-        if constexpr (impl::invocable_and_returns_something<Functor&&, const T&, const AdditionalArgs&&...>) {
-            return [&]() -> optional<std::invoke_result_t<Functor&&, const T&, const AdditionalArgs&&...>> {
+        if constexpr (impl::invocable_and_returns_something<Functor&&, const T&, AdditionalArgs&&...>) {
+            return [&]() -> optional<std::invoke_result_t<Functor&&, const T&, AdditionalArgs&&...>> {
                 if (m_engaged) {
                     return std::forward<Functor>(f)(value(), std::forward<AdditionalArgs>(additional_args)...);
                 }
