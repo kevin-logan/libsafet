@@ -354,7 +354,7 @@ TEST_CASE("optional::if_set()", "[optional]")
             REQUIRE(value == 4);
             REQUIRE(*test_pointer == 10);
             return value;
-        }, std::move(std::make_unique<int>(10)));
+        }, std::make_unique<int>(10));
         REQUIRE_FALSE(new_const_o.empty());
 
     }
